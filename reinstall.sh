@@ -3,8 +3,8 @@
 # shellcheck disable=SC2086
 
 set -eE
-confhome=https://raw.githubusercontent.com/bin456789/reinstall/main
-confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/main
+confhome=https://raw.githubusercontent.com/fuzzbuster/reinstall/main
+confhome_cn=http://192.168.53.1:8888
 # confhome_cn=https://www.ghproxy.cc/https://raw.githubusercontent.com/bin456789/reinstall/main
 
 # 默认密码
@@ -75,6 +75,11 @@ Usage: $reinstall_____ anolis      7|8|23
                        [--ssh-port  PORT]
                        [--web-port  PORT]
                        [--frpc-toml TOML]
+
+                       For LUKS + Dropbear (Debian/Kali/Ubuntu):
+
+                       [--dropbear-port PORT]
+                       [--dropbear-key KEY]
 
                        For Windows Only:
                        [--allow-ping]
@@ -1197,7 +1202,12 @@ Continue?
             eval ${step}_udeb_mirror=$udeb_mirror
             eval ${step}_vmlinuz=https://$initrd_mirror/$initrd_dir/linux
             eval ${step}_initrd=https://$initrd_mirror/$initrd_dir/initrd.gz
-            eval ${step}_ks=$confhome/debian.cfg
+            # 根据是否启用 LUKS 选择配置文件
+            if [ -n "$dropbear_key" ]; then
+                eval ${step}_ks=$confhome/debian-luks.cfg
+            else
+                eval ${step}_ks=$confhome/debian.cfg
+            fi
             eval ${step}_firmware=$cdimage_mirror/unofficial/non-free/firmware/$codename/current/firmware.cpio.gz
             eval ${step}_codename=$codename
         fi
@@ -1226,7 +1236,12 @@ Continue?
 
             eval ${step}_vmlinuz=$mirror/linux
             eval ${step}_initrd=$mirror/initrd.gz
-            eval ${step}_ks=$confhome/debian.cfg
+            # 根据是否启用 LUKS 选择配置文件
+            if [ -n "$dropbear_key" ]; then
+                eval ${step}_ks=$confhome/debian-luks.cfg
+            else
+                eval ${step}_ks=$confhome/debian.cfg
+            fi
             eval ${step}_udeb_mirror=$hostname/kali
             eval ${step}_codename=$codename
             eval ${step}_kernel=linux-image$flavour-$basearch_alt
@@ -1306,8 +1321,12 @@ Continue?
             test_url "$iso" iso
             eval ${step}_iso=$iso
 
-            # ks
-            eval ${step}_ks=$confhome/ubuntu.yaml
+            # ks - 根据是否启用 LUKS 选择配置文件
+            if [ -n "$dropbear_key" ]; then
+                eval ${step}_ks=$confhome/ubuntu-luks.yaml
+            else
+                eval ${step}_ks=$confhome/ubuntu.yaml
+            fi
             eval ${step}_minimal=$minimal
         fi
     }
@@ -3587,6 +3606,14 @@ This script is outdated, please download reinstall.sh again.
         cat "$frpc_config" >$initrd_dir/configs/frpc.toml
     fi
 
+    # 保存 LUKS 和 Dropbear 相关配置
+    if [ -n "$dropbear_port" ]; then
+        echo "$dropbear_port" >$initrd_dir/configs/dropbear-port
+    fi
+    if [ -n "$dropbear_key" ]; then
+        printf '%s\n' "$dropbear_key" >$initrd_dir/configs/dropbear-key
+    fi
+
     if is_distro_like_debian $nextos_distro; then
         mod_initrd_debian_kali
     else
@@ -3756,7 +3783,9 @@ for o in ci installer debug minimal allow-ping force-cn help \
     commit: \
     frpc-conf: frpc-config: frpc-toml: \
     force: \
-    force-old-windows-setup:; do
+    force-old-windows-setup: \
+    dropbear-port: \
+    dropbear-key:; do
     [ -n "$long_opts" ] && long_opts+=,
     long_opts+=$o
 done
@@ -3840,6 +3869,16 @@ while true; do
     --passwd | --password)
         [ -n "$2" ] || error_and_exit "Need value for $1"
         password=$2
+        shift 2
+        ;;
+    --dropbear-port)
+        is_port_valid $2 || error_and_exit "Invalid $1 value: $2"
+        dropbear_port=$2
+        shift 2
+        ;;
+    --dropbear-key)
+        [ -n "$2" ] || ssh_key_error_and_exit "Need value for $1"
+        dropbear_key=$2
         shift 2
         ;;
     --ssh-key | --public-key)
@@ -4502,4 +4541,22 @@ fi
 if is_in_windows; then
     echo 'You can run this command to reboot:'
     echo 'shutdown /r /t 0'
+fi
+
+# LUKS encryption setup info
+if [ -n "$dropbear_key" ]; then
+    echo
+    info "LUKS Encryption"
+    echo "Default LUKS password: insecure"
+    echo "Dropbear SSH Publickey: $dropbear_key"
+    echo
+    echo "To change LUKS password after installation:"
+    echo "sudo cryptsetup luksChangeKey /dev/sda5"
+    echo
+    echo "To verify Dropbear SSH configuration:"
+    echo "# For Debian 11/Ubuntu 20.04 and earlier:"
+    echo "sudo cat /etc/dropbear-initramfs/authorized_keys"
+    echo "# For Debian 12/Ubuntu 22.04 and newer:"
+    echo "sudo cat /etc/dropbear/initramfs/authorized_keys"
+    echo "sudo update-initramfs -u"
 fi
